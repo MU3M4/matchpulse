@@ -2,6 +2,7 @@
 import { notFound } from 'next/navigation';
 import Link from 'next/link';
 import { ArrowLeft, Clock, AlertTriangle } from 'lucide-react';
+import { query } from '@/lib/db';
 
 // Types for our data
 type MatchData = {
@@ -32,41 +33,55 @@ export default async function MatchDetailPage({
 }) {
     const { id } = await params;
 
-    let match: MatchData | null = null;
-    let events: Event[] = [];
-    let error: string | null = null;
-
-    try {
-        // Fetch data from our API route
-        const res = await fetch(`http://localhost:3000/api/match/${id}`, {
-            cache: 'no-store'
-        });
-
-        if (!res.ok) {
-            const errorData = await res.json();
-            error = errorData.error || "Failed to load match";
-
-            if (res.status === 404) {
-                return notFound();
-            }
-        } else {
-            const data = await res.json();
-            match = data.match;
-            events = data.events || [];
-        }
-    } catch (err) {
-        console.error("Error in match detail page:", err);
-        error = "Failed to connect to server";
+    // Validate the ID
+    if (!id || isNaN(parseInt(id))) {
+        return notFound();
     }
 
-    // Show error state
-    if (error) {
+    let match: MatchData | null = null;
+    let events: Event[] = [];
+
+    try {
+        // FIX: Query the database DIRECTLY instead of fetching from our own API
+        const matchSql = `
+      SELECT 
+        f.id, f.external_api_id, f.status, f.score_home, f.score_away, 
+        f.league, f.kickoff_time,
+        t1.name AS home_team_name, t1.logo_url AS home_team_logo,
+        t2.name AS away_team_name, t2.logo_url AS away_team_logo
+      FROM fixtures f
+      JOIN teams t1 ON f.home_team_id = t1.id
+      JOIN teams t2 ON f.away_team_id = t2.id
+      WHERE f.external_api_id = ${id}
+    `;
+
+        const matchData = await query(matchSql);
+
+        if (!matchData || matchData.length === 0) {
+            return notFound();
+        }
+
+        match = matchData[0] as MatchData;
+
+        // Fetch match events
+        const eventsSql = `
+      SELECT minute, event_type, player_name, team_id
+      FROM match_events
+      WHERE fixture_id = (SELECT id FROM fixtures WHERE external_api_id = ${id})
+      ORDER BY minute ASC
+    `;
+
+        const eventsData = await query(eventsSql);
+        events = eventsData as Event[];
+
+    } catch (error) {
+        console.error("Error fetching match details:", error);
         return (
             <div className="min-h-screen bg-zinc-950 text-white flex items-center justify-center p-4">
                 <div className="max-w-md w-full text-center">
                     <AlertTriangle className="w-16 h-16 text-red-500 mx-auto mb-4" />
                     <h2 className="text-xl font-bold mb-2">Oops! Something went wrong</h2>
-                    <p className="text-zinc-400 mb-6">{error}</p>
+                    <p className="text-zinc-400 mb-6">Failed to load match details</p>
                     <Link
                         href="/"
                         className="inline-block bg-[#00FF66] text-black font-bold px-6 py-3 rounded-full hover:bg-[#00cc52] transition-colors"
@@ -76,11 +91,6 @@ export default async function MatchDetailPage({
                 </div>
             </div>
         );
-    }
-
-    // If no match data (shouldn't happen due to 404 check above, but just in case)
-    if (!match) {
-        return notFound();
     }
 
     return (
