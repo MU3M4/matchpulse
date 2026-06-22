@@ -9,7 +9,8 @@ const rdsDataClient = new RDSDataClient({
     },
 });
 
-export async function query(sql: string) {
+// FIX: Explicitly tell TypeScript this ALWAYS returns an array
+export async function query(sql: string): Promise<any[]> {
     const command = new ExecuteStatementCommand({
         resourceArn: process.env.DB_CLUSTER_ARN,
         secretArn: process.env.DB_SECRET_ARN,
@@ -21,9 +22,9 @@ export async function query(sql: string) {
     try {
         const response = await rdsDataClient.send(command);
 
-        // For CREATE TABLE or INSERT, there are no records to parse, just return the response
+        // FIX: If it's an INSERT/UPDATE with no records, return an empty array instead of the raw AWS object
         if (!response.records || response.records.length === 0) {
-            return response;
+            return [];
         }
 
         // For SELECT queries, parse the AWS Data API format into normal JSON
@@ -32,7 +33,6 @@ export async function query(sql: string) {
         return response.records.map((record) => {
             const row: any = {};
             record.forEach((field, index) => {
-                // FIX: The '?.' and '||' ensure colName is ALWAYS a string, fixing the TypeScript error
                 const colName = columnMetadata[index]?.name || `col_${index}`;
 
                 if (field.isNull) {
